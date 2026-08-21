@@ -134,7 +134,7 @@ public class PlayerDataCollector
 				continue;
 			}
 
-			if (item.getId() > 0 && item.getQuantity() > 0)
+			if (item.getId() > 0 && item.getQuantity() > 0 && !isPlaceholder(item.getId()))
 			{
 				String name = getItemName(item.getId());
 				currentTabItems.add(new ItemEntry(item.getId(), name, item.getQuantity()));
@@ -345,6 +345,30 @@ public class PlayerDataCollector
 		catch (Exception e)
 		{
 			return "Unknown";
+		}
+	}
+
+	/**
+	 * Bank placeholders (left behind via "Item > Placeholder" to keep an
+	 * item's slot position after withdrawing all of it) occupy a real slot
+	 * in the bank's ItemContainer with a positive quantity - RuneLite
+	 * reports them at quantity 1, not 0, so the qty>0 check above doesn't
+	 * catch them. They're a distinct item ID from the real item though
+	 * (Jagex gives every placeholder-eligible item a separate placeholder
+	 * variant ID with the same display name), detectable via
+	 * ItemComposition#getPlaceholderTemplateId(): -1 for a real item,
+	 * the base item's ID for a placeholder.
+	 */
+	private boolean isPlaceholder(int itemId)
+	{
+		try
+		{
+			ItemComposition def = client.getItemDefinition(itemId);
+			return def != null && def.getPlaceholderTemplateId() != -1;
+		}
+		catch (Exception e)
+		{
+			return false;
 		}
 	}
 }
