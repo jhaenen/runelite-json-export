@@ -52,6 +52,108 @@ All data categories can be individually toggled in the plugin settings.
   achievements (default: 60 seconds, minimum: 30)
 - **Data Toggles**: Enable/disable syncing for each data category
 
+## Running / Building
+
+### Quick dev-mode testing
+
+`src/test/java/com/osrscompanion/OsrsCompanionPluginTest.java` is RuneLite's
+standard dev-mode harness — it registers this plugin as a builtin
+(`ExternalPluginManager.loadBuiltin`) and launches an actual RuneLite client
+built from source:
+
+```
+./gradlew run
+```
+
+This needs a JDK RuneLite's Gradle wrapper can actually run — check the
+pinned version in `gradle/wrapper/gradle-wrapper.properties` against your
+installed JDK before assuming a mismatch is something else; a JDK too new
+for that Gradle version fails with `Unsupported class file major version
+NN`, not an obviously-JDK-related error.
+
+**Logging in with a Jagex account in this mode** doesn't work out of the
+box — a locally-built/dev-mode client can't do the Jagex OAuth handshake on
+its own; only the official RuneLite Launcher (or something reimplementing
+its protocol) can. One-time bootstrap:
+
+1. In the official RuneLite Launcher (not Jagex's launcher, not a
+   third-party one), run with `--configure`, add
+   `--insecure-write-credentials` to Client arguments, save.
+2. Launch it once and log in — this writes `~/.runelite/credentials.properties`
+   (a session that bypasses your password — treat it like one).
+3. `./gradlew run` picks that file up automatically. **Delete it after
+   you're done** (`rm ~/.runelite/credentials.properties`) and remove the
+   `--insecure-write-credentials` arg — it has no reason to persist.
+   ([RuneLite wiki: Using Jagex Accounts](https://github.com/runelite/runelite/wiki/Using-Jagex-Accounts))
+
+### Running as your actual daily client (e.g. via Bolt)
+
+`~/.runelite/sideloaded-plugins/` — the officially documented way to load an
+unpublished plugin jar into a normal client in developer mode — **does not
+exist in any released RuneLite client yet** as of this writing. It's real
+code on RuneLite's `master` branch, but grepping the actual deployed
+`client-*.jar` for `sideload` comes up empty; don't trust GitHub source
+against a version number without checking the real jar first.
+
+What does work: build a **self-contained jar** (this plugin's classes +
+RuneLite + all deps, since `client`/`gson` are `compileOnly` and normally
+supplied by the host client, but a standalone jar needs everything present
+itself) and have your launcher run that instead of a vanilla client:
+
+```
+./gradlew shadowJar
+# -> build/libs/osrs-companion-1.0-SNAPSHOT-all.jar
+```
+
+For **Bolt** specifically (github.com/Adamcake/Bolt, an alternative Jagex
+Launcher for Linux):
+
+1. Bolt's Flatpak sandbox has no general filesystem access — only its own
+   `~/.var/app/com.adamcake.Bolt/` data dir. Copy the shadowJar there rather
+   than pointing at it in place:
+   ```
+   cp build/libs/osrs-companion-1.0-SNAPSHOT-all.jar \
+      ~/.var/app/com.adamcake.Bolt/data/bolt-launcher/osrs-companion-standalone.jar
+   ```
+2. Point Bolt at it in `~/.var/app/com.adamcake.Bolt/config/bolt-launcher/launcher.json`:
+   ```json
+   "runelite_use_custom_jar": true,
+   "runelite_custom_jar": "/home/<you>/.var/app/com.adamcake.Bolt/data/bolt-launcher/osrs-companion-standalone.jar"
+   ```
+3. `ExternalPluginManager.loadBuiltin()` asserts that JVM assertions are
+   enabled and refuses to run without them (`-ea`). Bolt's own
+   `jvmArguments`/`clientArguments` settings did **not** reliably reach this
+   custom-jar launch path when tested (Bolt version bundling RuneLite
+   1.12.36/launcher 2.8.0) — use a Flatpak-level env override instead, which
+   any JVM Bolt spawns inherits regardless of Bolt's own arg handling:
+   ```
+   flatpak override --user --env=JAVA_TOOL_OPTIONS="-ea -Dsun.java2d.uiScale=3" com.adamcake.Bolt
+   ```
+   (drop `-Dsun.java2d.uiScale=3` or change it if you don't need HiDPI
+   scaling — Bolt normally sets this itself for a vanilla launch, but that
+   also doesn't reach the custom-jar path.)
+4. Bolt hardcodes a `-J...`-style argument for this launch path even with
+   both settings above emptied out. `-J<opt>` is a convention understood by
+   `net.runelite.launcher.Launcher` (translated into a real JVM flag before
+   the client's `main()` runs) — but a standalone jar's `main()` skips that
+   launcher entirely, so it arrives as a literal, unrecognized application
+   argument and RuneLite's own arg parser (`joptsimple`) throws
+   `UnrecognizedOptionException: J is not a recognized option` immediately
+   on startup. `OsrsCompanionPluginTest.main()` filters out any `-J`-prefixed
+   arg before calling `RuneLite.main()` to handle this - if you rename or
+   replace that test/harness class, keep the filter.
+5. Relaunch Bolt. Confirm the plugin actually loaded by checking for
+   `OSRS Companion started` in
+   `~/.var/app/com.adamcake.Bolt/data/bolt-launcher/.runelite/logs/client.log`
+   (or the equivalent log path for whatever launcher you're using) rather
+   than only checking the plugin list UI — a crash before the window opens
+   looks identical to "nothing happened" from the outside, and the log is
+   how every issue above was actually diagnosed.
+
+Whenever you change the plugin, redo the `shadowJar` build and the `cp`
+step above (step 2 doesn't need repeating — `launcher.json` still points at
+the same path).
+
 ## Using with an MCP Server
 
 This plugin is one part of a three-piece system:
