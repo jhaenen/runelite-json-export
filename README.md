@@ -111,9 +111,22 @@ Launcher for Linux):
 
 1. Bolt's Flatpak sandbox has no general filesystem access — only its own
    `~/.var/app/com.adamcake.Bolt/` data dir. Copy the shadowJar there rather
-   than pointing at it in place:
+   than pointing at it in place — and if a client built from the jar at
+   that path might currently be running, copy to a temp file and `mv` it
+   into place rather than overwriting directly. A plain `cp` truncates and
+   rewrites the file a running process still has open; since Java loads
+   classes from a jar lazily, that process can keep working for minutes
+   after the swap, then hit `ClassNotFoundException`/`NoClassDefFoundError`
+   deep in the game client (looks exactly like a missing dependency, isn't)
+   the moment it finally tries to load a class it hadn't touched yet - this
+   silently corrupted a live session at logout twice before being tracked
+   down. `mv` on the same filesystem is atomic: a running process keeps
+   reading its original, complete file via its already-open handle no
+   matter when the rename happens.
    ```
    cp build/libs/osrs-companion-1.0-SNAPSHOT-all.jar \
+      ~/.var/app/com.adamcake.Bolt/data/bolt-launcher/.osrs-companion-standalone.jar.tmp
+   mv ~/.var/app/com.adamcake.Bolt/data/bolt-launcher/.osrs-companion-standalone.jar.tmp \
       ~/.var/app/com.adamcake.Bolt/data/bolt-launcher/osrs-companion-standalone.jar
    ```
 2. Point Bolt at it in `~/.var/app/com.adamcake.Bolt/config/bolt-launcher/launcher.json`:
@@ -151,9 +164,9 @@ Launcher for Linux):
    looks identical to "nothing happened" from the outside, and the log is
    how every issue above was actually diagnosed.
 
-Whenever you change the plugin, redo the `shadowJar` build and the `cp`
-step above (step 2 doesn't need repeating — `launcher.json` still points at
-the same path).
+Whenever you change the plugin, redo the `shadowJar` build and the
+copy-then-`mv` step above (step 2 doesn't need repeating — `launcher.json`
+still points at the same path).
 
 ## Using with an MCP Server
 
