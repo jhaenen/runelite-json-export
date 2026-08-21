@@ -24,6 +24,7 @@ public class PlayerDataCollector
 	private final Map<String, SkillEntry> skills = new LinkedHashMap<>();
 	private List<BankTab> bankTabs = null;
 	private int bankTotalItems = 0;
+	private List<PotionStorageEntry> potionStorage = null;
 	private List<InventoryItem> inventory = new ArrayList<>();
 	private final Map<String, ItemEntry> equipment = new LinkedHashMap<>();
 	private List<QuestEntry> quests = null;
@@ -156,6 +157,78 @@ public class PlayerDataCollector
 
 		this.bankTabs = tabs;
 		this.bankTotalItems = totalItems;
+	}
+
+	/**
+	 * Read Potion Storage contents (a separate bank feature, its own tab in
+	 * the bank UI, but NOT backed by an ItemContainer - unlike every other
+	 * category here). Storage is tracked as a handful of varplayers
+	 * (doses per potion "family") rather than discrete item stacks, and the
+	 * doses-to-item-id mapping depends on cache-defined enums plus the
+	 * player's per-potion withdraw dose-tier setting. Ported from
+	 * RuneLite's own core Bank Tags plugin
+	 * (PotionStorage#rebuildPotions in
+	 * runelite-client/.../plugins/banktags/tabs/PotionStorage.java), which
+	 * is the authoritative source for this - the alternative is reverse
+	 * engineering the varp bit-packing blind, which nothing here needs to
+	 * do since the client already exposes the decoded result via these
+	 * clientscripts.
+	 *
+	 * Call this whenever the bank is synced (same trigger as updateBank) -
+	 * like bank tabs, this is only meaningful to read while the bank
+	 * interface is open.
+	 */
+	public void updatePotionStorage()
+	{
+		try
+		{
+			List<PotionStorageEntry> entries = new ArrayList<>();
+
+			EnumComposition potionSlots = client.getEnum(EnumID.POTIONSTORE_POTIONS);
+			EnumComposition unfinishedPotionSlots = client.getEnum(EnumID.POTIONSTORE_UNFINISHED_POTIONS);
+
+			for (EnumComposition slots : new EnumComposition[]{potionSlots, unfinishedPotionSlots})
+			{
+				if (slots == null)
+				{
+					continue;
+				}
+
+				for (int potionEnumId : slots.getIntVals())
+				{
+					EnumComposition potionEnum = client.getEnum(potionEnumId);
+					if (potionEnum == null)
+					{
+						continue;
+					}
+
+					client.runScript(ScriptID.POTIONSTORE_DOSES, potionEnumId);
+					int doses = client.getIntStack()[0];
+					client.runScript(ScriptID.POTIONSTORE_WITHDRAW_DOSES, potionEnumId);
+					int withdrawDoses = client.getIntStack()[0];
+
+					if (doses > 0 && withdrawDoses > 0)
+					{
+						int itemId = potionEnum.getIntValue(withdrawDoses);
+						entries.add(new PotionStorageEntry(
+							itemId, getItemName(itemId), doses / withdrawDoses, doses, withdrawDoses));
+					}
+				}
+			}
+
+			int vials = client.getVarpValue(net.runelite.api.gameval.VarPlayerID.POTIONSTORE_VIALS);
+			if (vials > 0)
+			{
+				int vialItemId = net.runelite.api.gameval.ItemID.VIAL_EMPTY;
+				entries.add(new PotionStorageEntry(vialItemId, getItemName(vialItemId), vials, vials, 1));
+			}
+
+			this.potionStorage = entries;
+		}
+		catch (Exception e)
+		{
+			log.debug("Failed to read potion storage", e);
+		}
 	}
 
 	/**
@@ -309,6 +382,12 @@ public class PlayerDataCollector
 		if (bankTabs != null)
 		{
 			data.bank = new BankData(bankTotalItems, bankTabs);
+		}
+
+		// Potion Storage
+		if (potionStorage != null)
+		{
+			data.potionStorage = potionStorage;
 		}
 
 		// Inventory

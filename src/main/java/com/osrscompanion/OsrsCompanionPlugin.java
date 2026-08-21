@@ -167,6 +167,7 @@ public class OsrsCompanionPlugin extends Plugin
 		if (containerId == InventoryID.BANK.getId() && config.syncBank())
 		{
 			collector.updateBank(event.getItemContainer());
+			collector.updatePotionStorage();
 			saveNow();
 		}
 		else if (containerId == InventoryID.INVENTORY.getId() && config.syncInventory())
@@ -257,6 +258,7 @@ public class OsrsCompanionPlugin extends Plugin
 			if (bank != null)
 			{
 				collector.updateBank(bank);
+				collector.updatePotionStorage();
 			}
 		}
 

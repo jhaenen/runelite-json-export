@@ -15,6 +15,12 @@ public class PlayerSyncData
 	public PlayerInfo player;
 	public Map<String, SkillEntry> skills;
 	public BankData bank;
+	// Potion Storage is a separate bank feature (its own tab, but backed by
+	// varplayers + clientscripts, not an ItemContainer) - kept as its own
+	// field rather than folded into bank.tabs so callers can always tell
+	// regular bank items and stored potions apart without guessing at a
+	// tab index convention.
+	public List<PotionStorageEntry> potionStorage;
 	public List<InventoryItem> inventory;
 	public Map<String, ItemEntry> equipment;
 	public List<QuestEntry> quests;
@@ -93,6 +99,31 @@ public class PlayerSyncData
 		{
 			this.totalItems = totalItems;
 			this.tabs = tabs;
+		}
+	}
+
+	public static class PotionStorageEntry
+	{
+		public int itemId;
+		public String name;
+		// Whole potions at the currently-configured withdraw dose tier
+		// (matches what the in-game Potion Storage interface itself shows -
+		// e.g. "Prayer potion(4)" x12 for 48 stored prayer-potion doses at
+		// a 4-dose withdraw setting).
+		public int quantity;
+		// Total individual doses stored, independent of the withdraw
+		// setting above - kept alongside quantity since doses is the
+		// unambiguous underlying amount if the withdraw tier ever isn't 4.
+		public int doses;
+		public int doseTier;
+
+		public PotionStorageEntry(int itemId, String name, int quantity, int doses, int doseTier)
+		{
+			this.itemId = itemId;
+			this.name = name;
+			this.quantity = quantity;
+			this.doses = doses;
+			this.doseTier = doseTier;
 		}
 	}
 

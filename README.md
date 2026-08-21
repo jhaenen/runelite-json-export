@@ -27,6 +27,7 @@ you set one.
 |---------------------|------------------------------------------------------|
 | Skill levels & XP   | On login + immediately when stats change             |
 | Bank contents       | Immediately when you open your bank                  |
+| Potion Storage      | Immediately when you open your bank (separate field - it's a distinct storage location, not one of the numbered bank tabs) |
 | Inventory           | Immediately on item changes                           |
 | Equipment           | Immediately on equipment changes                      |
 | Quest status        | Polled and synced on the configured poll interval     |
