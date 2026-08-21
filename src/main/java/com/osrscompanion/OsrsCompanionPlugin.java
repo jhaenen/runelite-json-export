@@ -87,21 +87,33 @@ public class OsrsCompanionPlugin extends Plugin
 
 	/**
 	 * Runs on the JVM shutdown hook thread, so it must not depend on the
-	 * plugin's executor (which may already be shutting down) and should
-	 * send synchronously before the process exits.
+	 * plugin's executor (which may already be shutting down). The JVM waits
+	 * for this thread to return before exiting, so the actual network call
+	 * runs on a separate daemon thread with a bounded wait here - a hung or
+	 * misbehaving HTTP call must never be able to block shutdown forever,
+	 * only delay it by at most SHUTDOWN_FLUSH_TIMEOUT_MS.
 	 */
+	private static final long SHUTDOWN_FLUSH_TIMEOUT_MS = 5000;
+
 	private void shutdownFlush()
 	{
 		try
 		{
-			if (client.getGameState() == GameState.LOGGED_IN && collector != null && writer != null)
+			if (client.getGameState() != GameState.LOGGED_IN || collector == null || writer == null)
 			{
-				PlayerSyncData snapshot = collector.buildSnapshot();
-				if (snapshot.player != null)
-				{
-					writer.write(snapshot);
-				}
+				return;
 			}
+
+			PlayerSyncData snapshot = collector.buildSnapshot();
+			if (snapshot.player == null)
+			{
+				return;
+			}
+
+			Thread worker = new Thread(() -> writer.write(snapshot), "osrs-companion-shutdown-flush-worker");
+			worker.setDaemon(true);
+			worker.start();
+			worker.join(SHUTDOWN_FLUSH_TIMEOUT_MS);
 		}
 		catch (Exception e)
 		{
