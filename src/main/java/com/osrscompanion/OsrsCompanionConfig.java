@@ -9,18 +9,43 @@ import net.runelite.client.config.ConfigSection;
 public interface OsrsCompanionConfig extends Config
 {
 	@ConfigSection(
-		name = "Storage",
-		description = "Local file storage settings",
+		name = "Sync Destination",
+		description = "Where to push synced data",
 		position = 0
 	)
 	String storageSection = "storage";
 
 	@ConfigItem(
-		keyName = "syncIntervalSeconds",
-		name = "Save Interval (seconds)",
-		description = "How often to save updated data to disk (minimum 30)",
+		keyName = "ingestUrl",
+		name = "Ingest URL",
+		description = "Full URL of your ingest endpoint's /snapshot route, e.g. https://your-domain.example/snapshot",
 		section = storageSection,
 		position = 0
+	)
+	default String ingestUrl()
+	{
+		return "";
+	}
+
+	@ConfigItem(
+		keyName = "ingestToken",
+		name = "Ingest Token",
+		description = "Bearer token configured on the ingest endpoint",
+		section = storageSection,
+		position = 1,
+		secret = true
+	)
+	default String ingestToken()
+	{
+		return "";
+	}
+
+	@ConfigItem(
+		keyName = "syncIntervalSeconds",
+		name = "Poll Interval (seconds)",
+		description = "How often to poll and sync quest/diary/combat achievement completion (minimum 30). Skills, bank, inventory, and equipment sync immediately when changed.",
+		section = storageSection,
+		position = 2
 	)
 	default int syncIntervalSeconds()
 	{

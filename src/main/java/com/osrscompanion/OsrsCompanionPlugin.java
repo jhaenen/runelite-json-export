@@ -17,7 +17,7 @@ import java.util.concurrent.ScheduledExecutorService;
 @Slf4j
 @PluginDescriptor(
 	name = "OSRS MCP Companion",
-	description = "Saves player data locally as JSON for use with AI assistants via MCP",
+	description = "Pushes player data as JSON to a configured endpoint for use with AI assistants via MCP",
 	tags = {"sync", "data", "export", "mcp", "ai"}
 )
 public class OsrsCompanionPlugin extends Plugin
@@ -40,19 +40,41 @@ public class OsrsCompanionPlugin extends Plugin
 	private int tickCounter = 0;
 	private int syncTickThreshold = 100; // recalculated from config
 	private boolean initialCollectionDone = false;
+	private Thread shutdownHook;
 
 	@Override
 	protected void startUp()
 	{
 		collector = new PlayerDataCollector(client);
-		writer = new PlayerDataWriter(gson);
+		writer = new PlayerDataWriter(gson, config);
 		recalcSyncThreshold();
-		log.info("OSRS Companion started — saving to ~/.runelite/osrs-companion/");
+
+		// Best-effort final flush if the client is killed/crashes rather
+		// than cleanly logging out or being disabled - neither
+		// onGameStateChanged(LOGIN_SCREEN) nor shutDown() fires on a hard
+		// kill, so this is otherwise a gap.
+		shutdownHook = new Thread(this::shutdownFlush, "osrs-companion-shutdown-flush");
+		Runtime.getRuntime().addShutdownHook(shutdownHook);
+
+		log.info("OSRS Companion started — pushing to configured ingest endpoint");
 	}
 
 	@Override
 	protected void shutDown()
 	{
+		if (shutdownHook != null)
+		{
+			try
+			{
+				Runtime.getRuntime().removeShutdownHook(shutdownHook);
+			}
+			catch (IllegalStateException ignored)
+			{
+				// JVM is already shutting down - the hook will run itself
+			}
+			shutdownHook = null;
+		}
+
 		// Final save on shutdown
 		if (client.getGameState() == GameState.LOGGED_IN)
 		{
@@ -61,6 +83,30 @@ public class OsrsCompanionPlugin extends Plugin
 		collector = null;
 		writer = null;
 		log.info("OSRS Companion stopped");
+	}
+
+	/**
+	 * Runs on the JVM shutdown hook thread, so it must not depend on the
+	 * plugin's executor (which may already be shutting down) and should
+	 * send synchronously before the process exits.
+	 */
+	private void shutdownFlush()
+	{
+		try
+		{
+			if (client.getGameState() == GameState.LOGGED_IN && collector != null && writer != null)
+			{
+				PlayerSyncData snapshot = collector.buildSnapshot();
+				if (snapshot.player != null)
+				{
+					writer.write(snapshot);
+				}
+			}
+		}
+		catch (Exception e)
+		{
+			log.warn("OSRS Companion: shutdown flush failed", e);
+		}
 	}
 
 	@Provides
@@ -92,7 +138,7 @@ public class OsrsCompanionPlugin extends Plugin
 		if (collector != null && config.syncSkills())
 		{
 			collector.updateSkill(event.getSkill(), event.getLevel(), event.getXp());
-			dirty = true;
+			saveNow();
 		}
 	}
 
@@ -109,26 +155,26 @@ public class OsrsCompanionPlugin extends Plugin
 		if (containerId == InventoryID.BANK.getId() && config.syncBank())
 		{
 			collector.updateBank(event.getItemContainer());
-			dirty = true;
+			saveNow();
 		}
 		else if (containerId == InventoryID.INVENTORY.getId() && config.syncInventory())
 		{
 			collector.updateInventory(event.getItemContainer());
-			dirty = true;
+			saveNow();
 		}
 		else if (containerId == InventoryID.EQUIPMENT.getId() && config.syncEquipment())
 		{
 			collector.updateEquipment(event.getItemContainer());
-			dirty = true;
+			saveNow();
 		}
 	}
 
-	@Subscribe
-	public void onVarbitChanged(VarbitChanged event)
-	{
-		// Mark dirty so diaries/CAs get picked up on next poll
-		dirty = true;
-	}
+	// Note: varbits change far more often than actual quest/diary/combat
+	// achievement completions (many are unrelated UI/game state), so those
+	// categories are intentionally left on the periodic poll in
+	// onGameTick() below rather than saved on every VarbitChanged event -
+	// doing that would fire an HTTP push on nearly every tick during
+	// normal play.
 
 	@Subscribe
 	public void onGameTick(GameTick event)
@@ -151,28 +197,35 @@ public class OsrsCompanionPlugin extends Plugin
 			return;
 		}
 
-		// Periodic polling every ~30 ticks (~18 seconds)
-		if (tickCounter % 30 == 0)
+		// Quests/diaries/combat achievements only change via polling (no
+		// change event exists for them), so they're synced on the
+		// configured poll interval rather than write-through like the
+		// other categories.
+		if (tickCounter >= syncTickThreshold)
 		{
+			tickCounter = 0;
+			boolean polled = false;
+
 			if (config.syncQuests())
 			{
 				collector.pollQuests();
+				polled = true;
 			}
 			if (config.syncDiaries())
 			{
 				collector.pollDiaries();
+				polled = true;
 			}
 			if (config.syncCombatAchievements())
 			{
 				collector.pollCombatAchievements();
+				polled = true;
 			}
-		}
 
-		// Save at configured interval
-		if (dirty && tickCounter >= syncTickThreshold)
-		{
-			tickCounter = 0;
-			doSave();
+			if (polled)
+			{
+				saveNow();
+			}
 		}
 	}
 
@@ -230,7 +283,17 @@ public class OsrsCompanionPlugin extends Plugin
 	}
 
 	/**
-	 * Build snapshot and save to local file in background.
+	 * Mark data dirty and push it immediately (write-through) rather than
+	 * waiting for the next periodic save.
+	 */
+	private void saveNow()
+	{
+		dirty = true;
+		doSave();
+	}
+
+	/**
+	 * Build snapshot and push it to the ingest endpoint in the background.
 	 */
 	private void doSave()
 	{
