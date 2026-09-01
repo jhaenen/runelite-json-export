@@ -135,14 +135,6 @@ public class PlayerDataCollector
 			net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT_OTHER_MAX});
 	}
 
-	// Fired by the game's own clientscript once per obtained item, only
-	// while a Collection Log category page is open in-game (verified via
-	// weirdgloop/WikiSync's onScriptPreFired, the OSRS Wiki's own client
-	// plugin that uses this exact script id to build its item-completion
-	// bitset). Independent of the "New addition" chat setting the regex
-	// below depends on.
-	static final int COLLECTION_LOG_ITEM_SCRIPT_ID = 4100;
-
 	// Matches RuneLite's ChatMessageType.GAMEMESSAGE text for a new unlock,
 	// which requires the player's "Collection log - New addition
 	// notification: Chat message" game setting to be enabled (see
@@ -493,19 +485,6 @@ public class PlayerDataCollector
 		if (matcher.find())
 		{
 			obtainedCollectionLogItems.add(matcher.group(1).trim());
-		}
-	}
-
-	/**
-	 * Record an item observed as obtained via the collection log's own
-	 * item-population clientscript (see COLLECTION_LOG_ITEM_SCRIPT_ID).
-	 */
-	public void onCollectionLogItemScriptFired(int itemId)
-	{
-		String name = getItemName(itemId);
-		if (name != null && !"Unknown".equals(name))
-		{
-			obtainedCollectionLogItems.add(name);
 		}
 	}
 
