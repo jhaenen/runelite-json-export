@@ -190,6 +190,44 @@ public class OsrsCompanionPlugin extends Plugin
 	// normal play.
 
 	@Subscribe
+	public void onChatMessage(ChatMessage event)
+	{
+		if (collector == null || !config.syncCollectionLog())
+		{
+			return;
+		}
+		if (event.getType() != ChatMessageType.GAMEMESSAGE)
+		{
+			return;
+		}
+		// Collection log observations only touch the in-memory obtained-item
+		// set here, not a full poll - left for the next periodic tick below
+		// to actually push, same as quests/diaries/CAs. Opening a log page
+		// full of already-owned items can fire many of these (or the
+		// script-fired handler below) in a single tick; deferring to the
+		// poll interval avoids turning that into an HTTP push per item.
+		collector.onCollectionLogChatMessage(event.getMessage());
+	}
+
+	@Subscribe
+	public void onScriptPreFired(ScriptPreFired event)
+	{
+		if (collector == null || !config.syncCollectionLog())
+		{
+			return;
+		}
+		if (event.getScriptId() != PlayerDataCollector.COLLECTION_LOG_ITEM_SCRIPT_ID)
+		{
+			return;
+		}
+		Object[] args = event.getScriptEvent().getArguments();
+		if (args.length > 1 && args[1] instanceof Integer)
+		{
+			collector.onCollectionLogItemScriptFired((Integer) args[1]);
+		}
+	}
+
+	@Subscribe
 	public void onGameTick(GameTick event)
 	{
 		if (client.getGameState() != GameState.LOGGED_IN || collector == null)
@@ -232,6 +270,11 @@ public class OsrsCompanionPlugin extends Plugin
 			if (config.syncCombatAchievements())
 			{
 				collector.pollCombatAchievements();
+				polled = true;
+			}
+			if (config.syncCollectionLog())
+			{
+				collector.pollCollectionLog();
 				polled = true;
 			}
 
@@ -293,6 +336,11 @@ public class OsrsCompanionPlugin extends Plugin
 		if (config.syncCombatAchievements())
 		{
 			collector.pollCombatAchievements();
+		}
+
+		if (config.syncCollectionLog())
+		{
+			collector.pollCollectionLog();
 		}
 	}
 

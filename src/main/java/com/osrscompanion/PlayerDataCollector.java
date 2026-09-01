@@ -10,6 +10,8 @@ import net.runelite.api.Skill;
 
 import java.time.Instant;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Collects player data from the RuneLite Client API.
@@ -29,7 +31,15 @@ public class PlayerDataCollector
 	private final Map<String, ItemEntry> equipment = new LinkedHashMap<>();
 	private List<QuestEntry> quests = null;
 	private Map<String, DiaryRegion> diaries = null;
+	private Map<Integer, Integer> diaryTaskVarps = null;
+	private Map<Integer, Integer> diaryTaskVarbits = null;
 	private CombatAchievementData combatAchievements = null;
+	private CollectionLogCategoryCount collectionLogTotal = null;
+	private Map<String, CollectionLogCategoryCount> collectionLogCategories = null;
+	// Ever-growing within this plugin instance's lifetime only (cleared on
+	// client/plugin restart, not on logout) - see CollectionLogData's
+	// javadoc in PlayerSyncData for why this is best-effort, not exhaustive.
+	private final Set<String> obtainedCollectionLogItems = new LinkedHashSet<>();
 
 	// Equipment slot names in order
 	private static final String[] EQUIPMENT_SLOTS = {
@@ -63,11 +73,84 @@ public class PlayerDataCollector
 	private static final int KARAMJA_MED_TOTAL = 19;
 	private static final int KARAMJA_HARD_TOTAL = 10;
 
+	// Per-task achievement diary state (distinct from the tier-complete
+	// DIARY_VARBITS above). Individual tasks are packed as bits in these
+	// varplayers/varbits - decoding (which bit means which task) happens
+	// server-side in osrs-companion against osrs-companion/src/data/
+	// achievementDiaryTasks.json, NOT here, so the task LUT can be
+	// corrected without a plugin rebuild+redeploy. This plugin only reads
+	// the raw values. Exact ID list computed from that same JSON - see
+	// [[project-osrs-diary-tasks-feature]] memory for provenance/caveats
+	// (some of these, esp. outside the Karamja 3566-3610 range, come from
+	// an unverified third-party LUT and haven't been cross-checked against
+	// live gameplay yet).
+	private static final int[] DIARY_TASK_VARPS = {
+		1176, 1177, 1178, 1179, 1180, 1181, 1182, 1183, 1184, 1185, 1186, 1187,
+		1192, 1193, 1194, 1195, 1196, 1197, 1198, 1199, 1200, 2085, 2086
+	};
+	private static final int[] DIARY_TASK_VARBITS = {
+		3566, 3567, 3568, 3569, 3570, 3571, 3572, 3573, 3574, 3575, 3577,
+		3579, 3580, 3581, 3582, 3583, 3584, 3585, 3586, 3587, 3588, 3589,
+		3590, 3591, 3592, 3593, 3594, 3595, 3596, 3597, 3598,
+		3600, 3601, 3602, 3603, 3604, 3605, 3606, 3607, 3608, 3609, 3610,
+		4499, 4500, 4501, 4502, 4503, 4504, 4505, 4506, 4507, 4508, 4509, 4510,
+		4515, 4516, 4517, 4518, 4519, 4520, 4521, 4522, 4523, 4524, 4525,
+		4526, 4527, 4528, 4529, 4530, 4531, 4532, 4533, 4534, 4535, 4536,
+		4537, 4538, 4567, 7929, 7930, 7931, 7932
+	};
+
 	// Combat achievement tier threshold varbits
 	private static final int CA_EASY_THRESHOLD = 4132;
 	private static final int CA_MEDIUM_THRESHOLD = 10660;
 	private static final int CA_HARD_THRESHOLD = 10661;
 	private static final int CA_ELITE_THRESHOLD = 10662;
+
+	// Collection log completion count varplayers. Confirmed against the
+	// actual pinned runelite-api jar (net.runelite.api.gameval.VarPlayerID),
+	// and cross-checked against real usage in two actively-maintained
+	// third-party plugins (Dink's MetaNotifier#notifyLogin,
+	// weirdgloop/WikiSync) - unlike diaries/CAs there's no core RuneLite
+	// plugin for this to reference. These update without the Collection Log
+	// interface ever being opened, unlike everything below in this file
+	// related to individual item names.
+	private static final int CLOG_TOTAL = net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT;
+	private static final int CLOG_TOTAL_MAX = net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT_MAX;
+	private static final Map<String, int[]> CLOG_CATEGORY_VARPS = new LinkedHashMap<>();
+	static
+	{
+		CLOG_CATEGORY_VARPS.put("BOSSES", new int[]{
+			net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT_BOSSES,
+			net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT_BOSSES_MAX});
+		CLOG_CATEGORY_VARPS.put("RAIDS", new int[]{
+			net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT_RAIDS,
+			net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT_RAIDS_MAX});
+		CLOG_CATEGORY_VARPS.put("CLUES", new int[]{
+			net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT_CLUES,
+			net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT_CLUES_MAX});
+		CLOG_CATEGORY_VARPS.put("MINIGAMES", new int[]{
+			net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT_MINIGAMES,
+			net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT_MINIGAMES_MAX});
+		CLOG_CATEGORY_VARPS.put("OTHER", new int[]{
+			net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT_OTHER,
+			net.runelite.api.gameval.VarPlayerID.COLLECTION_COUNT_OTHER_MAX});
+	}
+
+	// Fired by the game's own clientscript once per obtained item, only
+	// while a Collection Log category page is open in-game (verified via
+	// weirdgloop/WikiSync's onScriptPreFired, the OSRS Wiki's own client
+	// plugin that uses this exact script id to build its item-completion
+	// bitset). Independent of the "New addition" chat setting the regex
+	// below depends on.
+	static final int COLLECTION_LOG_ITEM_SCRIPT_ID = 4100;
+
+	// Matches RuneLite's ChatMessageType.GAMEMESSAGE text for a new unlock,
+	// which requires the player's "Collection log - New addition
+	// notification: Chat message" game setting to be enabled (see
+	// weirdgloop/WikiSync and Dink's CollectionNotifier, both of which
+	// document this same dependency). Only fires for items unlocked while
+	// this client is running and listening.
+	private static final Pattern COLLECTION_LOG_CHAT_PATTERN =
+		Pattern.compile("New item added to your collection log: (.+)");
 
 	public PlayerDataCollector(Client client)
 	{
@@ -333,6 +416,21 @@ public class PlayerDataCollector
 		));
 
 		this.diaries = diaryMap;
+
+		// Raw per-task state - see DIARY_TASK_VARPS/DIARY_TASK_VARBITS above.
+		Map<Integer, Integer> varpMap = new LinkedHashMap<>();
+		for (int varpId : DIARY_TASK_VARPS)
+		{
+			varpMap.put(varpId, client.getVarpValue(varpId));
+		}
+		this.diaryTaskVarps = varpMap;
+
+		Map<Integer, Integer> varbitMap = new LinkedHashMap<>();
+		for (int varbitId : DIARY_TASK_VARBITS)
+		{
+			varbitMap.put(varbitId, client.getVarbitValue(varbitId));
+		}
+		this.diaryTaskVarbits = varbitMap;
 	}
 
 	/**
@@ -351,6 +449,64 @@ public class PlayerDataCollector
 			easyDone, medDone, hardDone, eliteDone,
 			Collections.emptyList()
 		);
+	}
+
+	/**
+	 * Poll collection log completion counts via varplayers. Cheap and always
+	 * in sync - unlike combat achievements/diaries this needs no clientscript
+	 * or widget interaction at all. COLLECTION_COUNT_MAX being 0 means the
+	 * client hasn't populated these varps yet (e.g. very early after login);
+	 * skip rather than record a bogus 0/0 in that case.
+	 */
+	public void pollCollectionLog()
+	{
+		int totalMax = client.getVarpValue(CLOG_TOTAL_MAX);
+		if (totalMax <= 0)
+		{
+			return;
+		}
+
+		this.collectionLogTotal = new CollectionLogCategoryCount(client.getVarpValue(CLOG_TOTAL), totalMax);
+
+		Map<String, CollectionLogCategoryCount> categories = new LinkedHashMap<>();
+		for (Map.Entry<String, int[]> entry : CLOG_CATEGORY_VARPS.entrySet())
+		{
+			int[] varps = entry.getValue();
+			categories.put(entry.getKey(), new CollectionLogCategoryCount(
+				client.getVarpValue(varps[0]), client.getVarpValue(varps[1])));
+		}
+		this.collectionLogCategories = categories;
+	}
+
+	/**
+	 * Check a game-message chat line for a collection log unlock. Call for
+	 * every ChatMessageType.GAMEMESSAGE line - cheap regex miss on anything
+	 * else.
+	 */
+	public void onCollectionLogChatMessage(String message)
+	{
+		if (message == null)
+		{
+			return;
+		}
+		Matcher matcher = COLLECTION_LOG_CHAT_PATTERN.matcher(message);
+		if (matcher.find())
+		{
+			obtainedCollectionLogItems.add(matcher.group(1).trim());
+		}
+	}
+
+	/**
+	 * Record an item observed as obtained via the collection log's own
+	 * item-population clientscript (see COLLECTION_LOG_ITEM_SCRIPT_ID).
+	 */
+	public void onCollectionLogItemScriptFired(int itemId)
+	{
+		String name = getItemName(itemId);
+		if (name != null && !"Unknown".equals(name))
+		{
+			obtainedCollectionLogItems.add(name);
+		}
 	}
 
 	/**
@@ -404,9 +560,23 @@ public class PlayerDataCollector
 
 		// Diaries
 		data.achievementDiaries = diaries;
+		data.diaryTaskVarps = diaryTaskVarps;
+		data.diaryTaskVarbits = diaryTaskVarbits;
 
 		// Combat achievements
 		data.combatAchievements = combatAchievements;
+
+		// Collection log - only send once at least one valid count poll has
+		// happened; obtainedItems rides along with it (empty list until the
+		// first chat/script observation, never null once counts exist).
+		if (collectionLogTotal != null)
+		{
+			CollectionLogData clog = new CollectionLogData();
+			clog.total = collectionLogTotal;
+			clog.categories = collectionLogCategories;
+			clog.obtainedItems = new ArrayList<>(obtainedCollectionLogItems);
+			data.collectionLog = clog;
+		}
 
 		return data;
 	}

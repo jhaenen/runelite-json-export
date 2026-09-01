@@ -142,4 +142,16 @@ public interface OsrsCompanionConfig extends Config
 	{
 		return true;
 	}
+
+	@ConfigItem(
+		keyName = "syncCollectionLog",
+		name = "Sync Collection Log",
+		description = "Include collection log completion counts and observed item unlocks",
+		section = dataSection,
+		position = 7
+	)
+	default boolean syncCollectionLog()
+	{
+		return true;
+	}
 }

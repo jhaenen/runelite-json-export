@@ -25,7 +25,13 @@ public class PlayerSyncData
 	public Map<String, ItemEntry> equipment;
 	public List<QuestEntry> quests;
 	public Map<String, DiaryRegion> achievementDiaries;
+	// Raw per-task achievement diary bits, keyed by varplayer/varbit ID.
+	// Decoded server-side (osrs-companion) against a task LUT, not here -
+	// see PlayerDataCollector.DIARY_TASK_VARPS/DIARY_TASK_VARBITS.
+	public Map<Integer, Integer> diaryTaskVarps;
+	public Map<Integer, Integer> diaryTaskVarbits;
 	public CombatAchievementData combatAchievements;
+	public CollectionLogData collectionLog;
 
 	public static class PlayerInfo
 	{
@@ -176,5 +182,41 @@ public class PlayerSyncData
 			this.eliteComplete = eliteComplete;
 			this.completedTasks = completedTasks;
 		}
+	}
+
+	public static class CollectionLogCategoryCount
+	{
+		public int completed;
+		public int possible;
+
+		public CollectionLogCategoryCount(int completed, int possible)
+		{
+			this.completed = completed;
+			this.possible = possible;
+		}
+	}
+
+	/**
+	 * Collection log data has no full-state bulk API (no varbit/ItemContainer
+	 * exposes "every unlocked item ever"), so this combines two sources:
+	 * - total/categories: cheap per-tab completion counts from
+	 *   VarPlayerID.COLLECTION_COUNT* varps, always in sync (no widget/UI
+	 *   interaction needed - see PlayerDataCollector.pollCollectionLog()).
+	 * - obtainedItems: a flat, ever-growing set of item names the client has
+	 *   actually observed as obtained, via a "New item added to your
+	 *   collection log" chat message (real-time, only while listening) or
+	 *   the game's own collection-log-page-population clientscript firing
+	 *   per obtained item (only as the player browses log pages in-game -
+	 *   see OsrsCompanionPlugin.onScriptPreFired). Neither source alone (nor
+	 *   both together) guarantees full coverage of a player's existing
+	 *   unlocks - this is a best-effort, additive log, not a complete
+	 *   inventory. Resets to empty on plugin/client restart; the server
+	 *   merges it as a union so previously-observed items are never lost.
+	 */
+	public static class CollectionLogData
+	{
+		public CollectionLogCategoryCount total;
+		public Map<String, CollectionLogCategoryCount> categories;
+		public List<String> obtainedItems;
 	}
 }
