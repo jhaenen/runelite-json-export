@@ -121,3 +121,57 @@ is code-related. Once building, `./gradlew compileJava` is enough to catch
 real errors against the actual RuneLite API jar (fast); only run
 `./gradlew shadowJar` once you're ready to actually stage a deploy, per the
 atomic-rename rule above.
+
+## `ScriptPreFired` diagnostic logging needs a hard cap and dedup, always
+
+**Incident (2026-09-01):** a debug `onScriptPreFired` subscriber added to
+investigate collection log item detection logged unconditionally while a
+sticky "interface was opened at some point" flag stayed true - it never
+turned back off, and kept matching ambient always-running scripts (health
+orb, minimap, etc.) completely unrelated to what was being investigated.
+It flooded the live client's log file at roughly 1000+ lines/second,
+rotating through several 10MB log files within about two minutes, on a
+character actively logged in and playing. No local relaunch or plugin
+disable is instant, so this ran for real time before it could be stopped.
+
+**Fix that actually worked:** don't gate on a sticky flag or a widget-group
+check (both were tried and both still let ambient noise through or missed
+the real event - see below). Deduplicate by `(scriptId, args.toString())`
+into a `HashSet` with a hard cap (a few thousand is fine), and only log on
+the *first* time a given combination is seen. Ambient/redraw scripts repeat
+identical args every tick and collapse to one line each; a genuine
+per-item event (varying args, e.g. an item ID) stays visible. This bounds
+worst-case volume regardless of how noisy the surrounding client activity
+is - treat any temporary `ScriptPreFired`-wide logging as unsafe without
+this, full stop.
+
+## Collection log per-item detection: two scripts, two very different meanings
+
+While building collection log tracking, two different clientscript IDs
+looked plausible for "this item was just rendered/obtained" and behaved
+completely differently:
+
+- **Script 1479** fires once per item, with the item ID as its second
+  argument, while browsing a category page (e.g. clicking "Moons of
+  Peril") - but for the category's **entire possible item pool**,
+  obtained or not. Verified directly: browsing a page showing "Obtained:
+  11/13" with two known-missing items (Eclipse moon chestplate, Blue moon
+  tassets, confirmed by asking the player which icons were greyed out)
+  still fired 1479 for both of those exact item IDs. **Not usable as an
+  obtained signal on its own** - it's a data/icon-population pass, not an
+  ownership check.
+- **Script 4100** (the ID `weirdgloop/WikiSync` - the OSRS Wiki's own
+  client plugin - listens for) never fires during normal page browsing on
+  this client build at all. It *does* fire, correctly limited to actually-
+  owned items only, when triggered by a full collection-log export action
+  - concretely, pressing WikiSync's own in-game "sync" button. Verified the
+  same way: the known-missing items above were absent from its output.
+
+Net effect: there is no known way for *this* plugin to trigger 4100 on its
+own (it depends on WikiSync's own UI), so per-item detection here is
+chat-message-only (`onChatMessage`, the "New item added..." line) - see
+`PlayerSyncData.CollectionLogData`'s javadoc. If a one-off historical
+backfill of existing unlocks is ever wanted again, having this plugin's
+listener present while pressing WikiSync's sync button captures it via the
+same event bus, no plugin changes required - RuneLite delivers `ScriptPreFired`
+to every registered plugin, not just the one that "owns" the script.
