@@ -43,6 +43,44 @@ window either way. This is standard Unix "atomic deploy" practice for
 exactly this reason - use it here every time, no exceptions, even though
 the change only affects the *next* client start.
 
+## Checking whether the client is currently running
+
+The atomic-rename deploy above is safe *unconditionally* - it never
+depends on whether a client is running. But it's still worth knowing
+whether one is, e.g. to tell the user a relaunch is needed to pick up the
+new jar (it only affects the *next* start).
+
+**Incident (2026-08-21):** an agent ran `pgrep -af "Bolt\|RuneLite\|runelite"`,
+got no match, and told the user no client was running - while Bolt was
+actually running, logged in. The user had to notice and kill it manually.
+**Root cause: `\|` is not alternation in `pgrep`'s regex dialect.** `pgrep`
+matches with POSIX *extended* regex (like `egrep`), where alternation is a
+bare `|`; `\|` is a literal escaped pipe character, so the pattern was
+actually searching for the literal substring `Bolt|RuneLite|runelite`
+(with pipe characters in it) - which of course never appears in a real
+command line. This is a `grep`-BRE habit (`\|` for alternation) that
+doesn't carry over. It was *not* a Flatpak-sandboxing/process-visibility
+issue - the real java process (`.../bolt-launcher/osrs-companion-standalone.jar`)
+is fully visible in `ps aux`/`pgrep` from the host, `com.adamcake.Bolt`
+included, once the regex is correct:
+
+```bash
+pgrep -af "Bolt|RuneLite|runelite"   # correct: bare | for alternation
+```
+
+**Prefer `flatpak ps` anyway** - it's simpler, has no regex to get wrong,
+and is Flatpak's own authoritative running-instance registry rather than
+a process-name guess:
+
+```bash
+flatpak ps | grep -q com.adamcake.Bolt && echo "Bolt is running" || echo "Bolt is not running"
+```
+
+Either way: verify the check actually works (e.g. against a known
+running/not-running state) before trusting a negative result and stating
+it to the user as fact - a silent regex mistake here previously produced
+a confidently wrong answer.
+
 ## Bank placeholders report quantity 1, not 0
 
 A placeholder left via "Item > Placeholder" (to keep an item's bank slot
