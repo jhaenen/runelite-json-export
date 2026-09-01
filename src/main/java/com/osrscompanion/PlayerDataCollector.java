@@ -144,6 +144,19 @@ public class PlayerDataCollector
 	private static final Pattern COLLECTION_LOG_CHAT_PATTERN =
 		Pattern.compile("New item added to your collection log: (.+)");
 
+	// Fired by the game client once per OWNED item, but only when triggered
+	// by a full collection-log export action - NOT during normal page
+	// browsing (verified live: browsing a page fires a different script,
+	// 1479, for that category's entire possible item pool regardless of
+	// ownership). The only known way to trigger this one is pressing
+	// weirdgloop/WikiSync's own in-game "sync" button; this plugin can't
+	// trigger it itself. Kept as a passive listener purely because RuneLite
+	// delivers ScriptPreFired to every registered plugin, not just the one
+	// that "owns" the script id - so if the player presses that button for
+	// WikiSync's own purposes, we get a free, more-complete item list
+	// alongside the chat-message detection above, at zero cost otherwise.
+	static final int COLLECTION_LOG_ITEM_SCRIPT_ID = 4100;
+
 	public PlayerDataCollector(Client client)
 	{
 		this.client = client;
@@ -485,6 +498,21 @@ public class PlayerDataCollector
 		if (matcher.find())
 		{
 			obtainedCollectionLogItems.add(matcher.group(1).trim());
+		}
+	}
+
+	/**
+	 * Record an item observed as obtained via COLLECTION_LOG_ITEM_SCRIPT_ID -
+	 * see that constant's javadoc for when this actually fires (not during
+	 * normal play; only via an external full-export trigger like WikiSync's
+	 * sync button).
+	 */
+	public void onCollectionLogItemScriptFired(int itemId)
+	{
+		String name = getItemName(itemId);
+		if (name != null && !"Unknown".equals(name))
+		{
+			obtainedCollectionLogItems.add(name);
 		}
 	}
 

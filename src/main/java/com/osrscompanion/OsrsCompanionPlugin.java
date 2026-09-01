@@ -210,6 +210,24 @@ public class OsrsCompanionPlugin extends Plugin
 	}
 
 	@Subscribe
+	public void onScriptPreFired(ScriptPreFired event)
+	{
+		if (collector == null || !config.syncCollectionLog())
+		{
+			return;
+		}
+		if (event.getScriptId() != PlayerDataCollector.COLLECTION_LOG_ITEM_SCRIPT_ID)
+		{
+			return;
+		}
+		Object[] args = event.getScriptEvent().getArguments();
+		if (args.length > 1 && args[1] instanceof Integer)
+		{
+			collector.onCollectionLogItemScriptFired((Integer) args[1]);
+		}
+	}
+
+	@Subscribe
 	public void onGameTick(GameTick event)
 	{
 		if (client.getGameState() != GameState.LOGGED_IN || collector == null)

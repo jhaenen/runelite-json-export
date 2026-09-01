@@ -203,26 +203,25 @@ public class PlayerSyncData
 	 *   VarPlayerID.COLLECTION_COUNT* varps, always in sync (no widget/UI
 	 *   interaction needed - see PlayerDataCollector.pollCollectionLog()).
 	 * - obtainedItems: a flat, ever-growing set of item names the client has
-	 *   actually observed as obtained, via a "New item added to your
-	 *   collection log" chat message (real-time, only while listening).
-	 *   This alone never guarantees full coverage of a player's existing
+	 *   actually observed as obtained, from two passive sources: a "New item
+	 *   added to your collection log" chat message (real-time, only while
+	 *   listening), and COLLECTION_LOG_ITEM_SCRIPT_ID firing (only when an
+	 *   external full collection-log export action - e.g. weirdgloop/WikiSync's
+	 *   own "sync" button - happens to run while this plugin is also
+	 *   listening; this plugin cannot trigger that itself). Neither source,
+	 *   nor both together, guarantees full coverage of a player's existing
 	 *   unlocks - this is a best-effort, additive log, not a complete
 	 *   inventory. Resets to empty on plugin/client restart; the server
 	 *   merges it as a union so previously-observed items are never lost.
 	 *
-	 * Note on a live investigation (2026-09-01): the game's own collection-
-	 * log-page-population clientscript (fired while browsing a page, one
-	 * call per item slot) turned out to fire for a category's *entire
-	 * possible item pool*, obtained or not - not usable as an obtained
-	 * signal, and so NOT wired up here despite matching weirdgloop/WikiSync's
-	 * approach on paper. A different script (id 4100, matching WikiSync's
-	 * own scriptId) does correctly fire only for owned items, but only when
-	 * triggered by a full collection-log export action (e.g. WikiSync's own
-	 * "sync" button) - not during normal page browsing. Deliberately not
-	 * wired into this plugin permanently since it depends on an external
-	 * plugin's UI, not anything this plugin can trigger on its own; it's
-	 * only useful as a manual, one-off historical backfill via the same
-	 * chat/script event hooks, exercised once out-of-band.
+	 * Investigated live on 2026-09-01: the game's own collection-log-page-
+	 * population clientscript (fired while browsing a page, one call per
+	 * item slot - id 1479 on the client build tested) fires for a
+	 * category's *entire possible item pool*, obtained or not - verified
+	 * against two known-missing items appearing in its output regardless.
+	 * Deliberately not used as an obtained signal for that reason, unlike
+	 * COLLECTION_LOG_ITEM_SCRIPT_ID above which was verified the same way to
+	 * correctly exclude known-missing items.
 	 */
 	public static class CollectionLogData
 	{
